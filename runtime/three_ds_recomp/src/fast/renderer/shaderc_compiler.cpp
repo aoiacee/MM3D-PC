@@ -118,6 +118,15 @@ std::string IdentifyCompiler() {
     for (const auto& fingerprint : fingerprints) contract += "/" + fingerprint;
     return contract;
 }
+
+// shaderc finalizes glslang when its last Compiler is destroyed, discarding the
+// built-in symbol tables; every later compile rebuilt them (~50 ms of a ~60 ms
+// compile). One process-lifetime Compiler keeps them. It is leaked on purpose
+// so no glslang teardown runs during static destruction.
+void KeepGlslangInitialized() {
+    static const auto* keepAlive = new shaderc::Compiler();
+    (void)keepAlive;
+}
 }
 
 const std::string& ShadercCompilerContract() {
@@ -136,6 +145,7 @@ std::vector<uint32_t> CompileShadercSpirv(std::string_view source, SpirvStage st
         case SpirvStage::Compute: kind = shaderc_compute_shader; break;
         default: throw std::invalid_argument("unsupported shader stage");
     }
+    KeepGlslangInitialized();
     shaderc::Compiler compiler;
     shaderc::CompileOptions options;
     options.SetTargetEnvironment(shaderc_target_env_vulkan, shaderc_env_version_vulkan_1_1);
@@ -187,6 +197,7 @@ std::vector<uint32_t> CachedPassShaderCompiler::Resolve(
             case SpirvStage::Compute: kind = shaderc_compute_shader; break;
             default: throw std::invalid_argument("unsupported pass shader stage");
         }
+        KeepGlslangInitialized();
         shaderc::Compiler compiler;
         shaderc::CompileOptions options;
         options.SetTargetEnvironment(shaderc_target_env_vulkan, shaderc_env_version_vulkan_1_2);
