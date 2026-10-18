@@ -1331,18 +1331,21 @@ bool GfxRenderingAPIVulkan::PublishSceneView(
         Oot3d::SceneViewRuntime::Instance().PublishPerspectiveCamera(
             view.GuestFunction, view.GuestReturnAddress,
             view.Left, view.Right, view.Bottom, view.Top,
-            view.NearPlane, view.FarPlane, view.Eye, view.At);
+            view.NearPlane, view.FarPlane, view.Eye, view.At, view.SourceFrame);
     } else {
         Oot3d::SceneViewRuntime::Instance().PublishPerspective(
             view.GuestFunction, view.GuestReturnAddress,
             view.Left, view.Right, view.Bottom, view.Top,
-            view.NearPlane, view.FarPlane);
+            view.NearPlane, view.FarPlane, view.SourceFrame);
     }
     return true;
 }
 
 bool GfxRenderingAPIVulkan::PublishPicaFrameTemporalSample(
     const ::Fast::Renderer3ds::PicaFrameTemporalSample& sample) {
+    Oot3d::SceneViewRuntime::Instance().SetPresentation(
+        sample.CurrentSourceFrameId,
+        sample.ViewAdjustmentValid ? std::optional(sample.ViewAdjustment) : std::nullopt);
     return mPicaSceneFrame.SetTemporalSample(sample);
 }
 

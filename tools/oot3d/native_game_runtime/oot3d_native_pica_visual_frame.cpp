@@ -3643,6 +3643,24 @@ bool SampleVisualFrameViewWithMatching(const Oot3dPicaVisualFrame& previous, con
     output.InterpolatedDraws = 0;
     output.InterpolatedPerInstanceVertexDraws = 0;
     output.InterpolatedPerVertexDraws = 0;
+    output.ViewAdjustmentValid = false;
+    if (CameraInterpolationEnabled() && matching.CameraDeltaValid) {
+        // As ApplyCameraDelta moves the world draws: rigid partial rotation, or
+        // the linear blend I + w (D - I).
+        const float weight = 1.0F - std::clamp(alpha, 0.0F, 1.0F);
+        Affine34 adjustment = PartialCameraDelta(matching.CameraDelta, weight);
+        if (!matching.RigidCamera) {
+            for (size_t row = 0; row < 3U; ++row)
+                for (size_t column = 0; column < 4U; ++column) {
+                    const float identity = row == column ? 1.0F : 0.0F;
+                    adjustment[row][column] = identity + weight * (matching.CameraDelta[row][column] - identity);
+                }
+        }
+        for (size_t row = 0; row < 3U; ++row)
+            for (size_t column = 0; column < 4U; ++column)
+                output.ViewAdjustment[row * 4U + column] = adjustment[row][column];
+        output.ViewAdjustmentValid = true;
+    }
     output.Draws.resize(current.Draws.size());
 
     for (size_t currentIndex = 0; currentIndex < current.Draws.size(); ++currentIndex) {
@@ -4305,6 +4323,7 @@ bool ViewOot3dPicaVisualFrame(
     output.InterpolatedDraws = 0;
     output.InterpolatedPerInstanceVertexDraws = 0;
     output.InterpolatedPerVertexDraws = 0;
+    output.ViewAdjustmentValid = false;  // drawn exactly as the game frame
     output.Draws.resize(frame.Draws.size());
     for (size_t index = 0; index < frame.Draws.size(); ++index) {
         auto& view = output.Draws[index];

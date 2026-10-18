@@ -10351,12 +10351,37 @@ bool PublishNativePicaGrassSurface(
 
     // f[20..22] is model-to-view in the rigid CMB path. Undo the camera
     // transform published by the guest runtime so placement persists in the
-    // room while the camera moves.
-    const std::array<float, 16> viewToWorld{
+    // room while the camera moves. WorldToView carries the in-between view of
+    // an interpolated presentation, which this frame's draws already include.
+    std::array<float, 16> viewToWorld{
         side[0], up[0], -forward[0], perspective.Eye[0],
         side[1], up[1], -forward[1], perspective.Eye[1],
         side[2], up[2], -forward[2], perspective.Eye[2],
         0.0F, 0.0F, 0.0F, 1.0F};
+    {
+        // Row-major 3x3 + translation of the column-major WorldToView.
+        const auto& w = perspective.WorldToView;
+        const auto m = [&](size_t row, size_t column) { return w[column * 4U + row]; };
+        const float c00 = m(1, 1) * m(2, 2) - m(1, 2) * m(2, 1);
+        const float c01 = m(1, 2) * m(2, 0) - m(1, 0) * m(2, 2);
+        const float c02 = m(1, 0) * m(2, 1) - m(1, 1) * m(2, 0);
+        const float determinant = m(0, 0) * c00 + m(0, 1) * c01 + m(0, 2) * c02;
+        if (w[15] == 1.0F && std::isfinite(determinant) && std::abs(determinant) > 1.0e-6F) {
+            const float d = 1.0F / determinant;
+            const std::array<float, 9> inverse{
+                c00 * d, (m(0, 2) * m(2, 1) - m(0, 1) * m(2, 2)) * d, (m(0, 1) * m(1, 2) - m(0, 2) * m(1, 1)) * d,
+                c01 * d, (m(0, 0) * m(2, 2) - m(0, 2) * m(2, 0)) * d, (m(0, 2) * m(1, 0) - m(0, 0) * m(1, 2)) * d,
+                c02 * d, (m(0, 1) * m(2, 0) - m(0, 0) * m(2, 1)) * d, (m(0, 0) * m(1, 1) - m(0, 1) * m(1, 0)) * d};
+            for (size_t row = 0; row < 3U; ++row) {
+                float translation = 0.0F;
+                for (size_t k = 0; k < 3U; ++k) {
+                    viewToWorld[row * 4U + k] = inverse[row * 3U + k];
+                    translation -= inverse[row * 3U + k] * m(k, 3);
+                }
+                viewToWorld[row * 4U + 3U] = translation;
+            }
+        }
+    }
     const auto modelToWorld = multiply(viewToWorld, modelToView);
     auto picaModelToClip = multiply(projection, modelToView);
     if (draw.FramebufferFlipped) {

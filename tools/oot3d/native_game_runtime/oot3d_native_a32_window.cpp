@@ -465,6 +465,8 @@ struct NativeWidescreenProjectionState {
       PendingTopScreenPauseChildRestore;
   Oot3dNativeGame::NativeFrameRatePolicy *FrameRatePolicy = nullptr;
   Oot3dNativeGame::NativeA32SceneViewProbe *SceneViewProbe = nullptr;
+  // MM3D: read the Play camera in the frustum hook (ReadMm3dPlayCamera).
+  bool Mm3dPlayCamera = false;
   Oot3dNativeGame::NativeA32PlayerTimingProbe *PlayerTimingProbe = nullptr;
   Oot3dNativeGame::NativeTemporalEventLedger *TemporalEventLedger = nullptr;
   Oot3dNativeGame::NativeA32PlayerTemporalBridge *PlayerTemporalBridge =
@@ -1888,6 +1890,34 @@ bool ExecuteNativeCandidate(uint32_t pc, oot3d::recomp::a32::GuestState &state,
   return handled;
 }
 
+// MM3D's active Play camera (layout from Project Restoration / dekui):
+// GlobalContext = *(*0x72F5C0 + 0x16C), Play when +0x13C's byte 1 is 4,
+// camera index at +0xA7A, cameras at +0x408 (0x198 each) with the look-at
+// point at +0x50 and the eye at +0x5C.
+bool ReadMm3dPlayCamera(oot3d::recomp::a32::MemoryBus &memory,
+                        std::array<float, 3> &eye, std::array<float, 3> &at) {
+  uint32_t context = 0, game = 0, type = 0, indices = 0;
+  if (!memory.Read32(0x0072F5C0U, &context) || context < 0x100000U ||
+      !memory.Read32(context + 0x16CU, &game) || game < 0x100000U || (game & 3U) != 0U ||
+      !memory.Read32(game + 0x13CU, &type) || ((type >> 8U) & 0xFFU) != 4U ||
+      !memory.Read32(game + 0xA78U, &indices) || (indices >> 16U) > 3U) {
+    return false;
+  }
+  const uint32_t camera = game + 0x408U + (indices >> 16U) * 0x198U;
+  std::array<uint32_t, 6> words{};
+  for (uint32_t index = 0; index < 6U; ++index) {
+    if (!memory.Read32(camera + 0x50U + index * 4U, &words[index])) {
+      return false;
+    }
+  }
+  for (uint32_t index = 0; index < 3U; ++index) {
+    at[index] = std::bit_cast<float>(words[index]);
+    eye[index] = std::bit_cast<float>(words[3U + index]);
+  }
+  const float dx = at[0] - eye[0], dy = at[1] - eye[1], dz = at[2] - eye[2];
+  return std::isfinite(dx + dy + dz) && dx * dx + dy * dy + dz * dz > 1.0e-6F;
+}
+
 // MM3D: Tatl's "wants to talk" alert sits in the upper screen's top left,
 // under the hearts and magic placed there: it is moved down below the
 // minimap (layout units, y down; TRIAEVUM_TATL_ALERT_Y, 0 leaves it). v1.1's
@@ -2756,10 +2786,22 @@ void ApplyNativeWidescreenProjectionPolicy(
     ++projection.FrustumCalls;
   }
   if (runtime.SceneViewProbe != nullptr) {
-    runtime.SceneViewProbe->ObservePerspective(
-        pc, state.r[14], resolvedLeft, resolvedRight,
-        resolved.Frustum.Bottom, resolved.Frustum.Top,
-        resolved.Frustum.NearPlane, resolved.Frustum.FarPlane);
+    std::array<float, 3> eye{}, at{};
+    // Read the camera now, while the guest builds this frame's view: read at
+    // publish time it can already be the next frame's, and anchored effects
+    // (grass) then drift while the camera moves.
+    if (runtime.Mm3dPlayCamera && runtime.TraceMemory != nullptr &&
+        ReadMm3dPlayCamera(*runtime.TraceMemory, eye, at)) {
+      runtime.SceneViewProbe->ObservePerspectiveCamera(
+          pc, state.r[14], resolvedLeft, resolvedRight,
+          resolved.Frustum.Bottom, resolved.Frustum.Top,
+          resolved.Frustum.NearPlane, resolved.Frustum.FarPlane, eye, at);
+    } else {
+      runtime.SceneViewProbe->ObservePerspective(
+          pc, state.r[14], resolvedLeft, resolvedRight,
+          resolved.Frustum.Bottom, resolved.Frustum.Top,
+          resolved.Frustum.NearPlane, resolved.Frustum.FarPlane);
+    }
   }
 }
 
@@ -3798,6 +3840,7 @@ void RunOot3dNativeA32Window(const Oot3dNativeGameLaunch &launch) {
       widescreenProjection.FrustumPc = restoration ? 0x00123010U : 0x00122FE8U;
       widescreenProjection.OrthographicPc = restoration ? 0x00131838U : 0x00131810U;
       widescreenProjection.FrustumAspect = 400.0F / 240.0F;
+      widescreenProjection.Mm3dPlayCamera = std::getenv("TRIAEVUM_MM3D_LATE_CAMERA") == nullptr;
       if (Oot3dNativeGame::TriAevumWidescreenEnabled()) {
         blockEntryHooks.push_back(widescreenProjection.FrustumPc);
       }
@@ -4963,43 +5006,21 @@ void RunOot3dNativeA32Window(const Oot3dNativeGameLaunch &launch) {
       }
     }
     if (manifest->Title.Id == "mm3d" && !cameraSnapshot.CameraAvailable) {
-      // MM3D's active Play camera (layout from Project Restoration / dekui):
-      // GlobalContext = *(*0x72F5C0 + 0x16C), Play when +0x13C's byte 1 is 4,
-      // camera index at +0xA7A, cameras at +0x408 (0x198 each) with the
-      // look-at point at +0x50 and the eye at +0x5C.
-      auto &memory = process.Memory();
-      uint32_t context = 0, game = 0, type = 0, indices = 0;
-      if (memory.Read32(0x0072F5C0U, &context) && context >= 0x100000U &&
-          memory.Read32(context + 0x16CU, &game) && game >= 0x100000U && (game & 3U) == 0U &&
-          memory.Read32(game + 0x13CU, &type) && ((type >> 8U) & 0xFFU) == 4U &&
-          memory.Read32(game + 0xA78U, &indices) && (indices >> 16U) <= 3U) {
-        const uint32_t camera = game + 0x408U + (indices >> 16U) * 0x198U;
-        std::array<uint32_t, 6> words{};
-        bool read = true;
-        for (uint32_t index = 0; index < 6U && read; ++index) {
-          read = memory.Read32(camera + 0x50U + index * 4U, &words[index]);
-        }
-        if (read) {
-          for (uint32_t index = 0; index < 3U; ++index) {
-            cameraSnapshot.At[index] = std::bit_cast<float>(words[index]);
-            cameraSnapshot.Eye[index] = std::bit_cast<float>(words[3U + index]);
-          }
-          const float dx = cameraSnapshot.At[0] - cameraSnapshot.Eye[0];
-          const float dy = cameraSnapshot.At[1] - cameraSnapshot.Eye[1];
-          const float dz = cameraSnapshot.At[2] - cameraSnapshot.Eye[2];
-          cameraSnapshot.CameraAvailable =
-              std::isfinite(dx + dy + dz) && dx * dx + dy * dy + dz * dz > 1.0e-6F;
-          static FILE *cameraTrace = [] {
-            const char *path = std::getenv("TRIAEVUM_CAMERA_TRACE");
-            return path != nullptr ? std::fopen(path, "w") : nullptr;
-          }();
-          if (cameraTrace != nullptr) {
-            std::fprintf(cameraTrace, "%llu %.3f %.3f %.3f\n",
-                         static_cast<unsigned long long>(snapshot->Serial),
-                         cameraSnapshot.At[0], cameraSnapshot.At[1], cameraSnapshot.At[2]);
-            std::fflush(cameraTrace);
-          }
-        }
+      // Fallback when the frustum hook did not supply the camera (hook off,
+      // or TRIAEVUM_MM3D_LATE_CAMERA): read it now, possibly a frame late.
+      cameraSnapshot.CameraAvailable =
+          ReadMm3dPlayCamera(process.Memory(), cameraSnapshot.Eye, cameraSnapshot.At);
+    }
+    if (manifest->Title.Id == "mm3d" && cameraSnapshot.CameraAvailable) {
+      static FILE *cameraTrace = [] {
+        const char *path = std::getenv("TRIAEVUM_CAMERA_TRACE");
+        return path != nullptr ? std::fopen(path, "w") : nullptr;
+      }();
+      if (cameraTrace != nullptr) {
+        std::fprintf(cameraTrace, "%llu %.3f %.3f %.3f\n",
+                     static_cast<unsigned long long>(snapshot->Serial),
+                     cameraSnapshot.At[0], cameraSnapshot.At[1], cameraSnapshot.At[2]);
+        std::fflush(cameraTrace);
       }
     }
     if (std::getenv("TRIAEVUM_VIEW_DEBUG")) {
@@ -5023,6 +5044,7 @@ void RunOot3dNativeA32Window(const Oot3dNativeGameLaunch &launch) {
         cameraSnapshot.Eye,
         cameraSnapshot.At,
         cameraSnapshot.CameraAvailable,
+        picaPresentationScheduler.NextVisualFrameSequence(),
     };
     if (titleRenderBackend != nullptr &&
         titleRenderBackend->PublishSceneView(view)) {
@@ -5063,7 +5085,10 @@ void RunOot3dNativeA32Window(const Oot3dNativeGameLaunch &launch) {
           bool present,
           const Fast::Oot3d::NativeFrameTemporalSample& temporalSample) {
         const auto started = std::chrono::steady_clock::now();
-        (void)api.PublishPicaFrameTemporalSample(temporalSample);
+        auto publishedSample = temporalSample;
+        publishedSample.ViewAdjustment = sample.ViewAdjustment;
+        publishedSample.ViewAdjustmentValid = sample.ViewAdjustmentValid;
+        (void)api.PublishPicaFrameTemporalSample(publishedSample);
         Fast::Oot3d::GrassInteractionBridge::Instance().SelectSample(temporalSample);
         if (!picaPresentationScheduler.Execute(
                 api, sample, kVisualInterpolationRenderTargetNamespace, kind,
