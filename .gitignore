@@ -82,6 +82,8 @@ graphs/
 
 # Build results
 [Dd]ebug/
+# libultraship keeps sources in debug/ folders; the rule above dropped them upstream.
+!runtime/three_ds_recomp/**/debug/
 [Dd]ebugPublic/
 [Rr]elease/
 [Rr]eleases/
@@ -93,6 +95,7 @@ bld/
 [Bb]in/
 [Oo]bj/
 [Ll]og/
+!runtime/three_ds_recomp/**/log/
 
 # Visual Studio 2015/2017 cache/options directory
 .vs/

@@ -65,7 +65,7 @@ cmake -S "$root" -B "$build" -G Ninja -DCMAKE_BUILD_TYPE=Release \
   -DTHREE_DS_RECOMP_ENABLE_NRI_UPSCALER_SDKS=OFF -DTHREE_DS_RECOMP_ENABLE_D3D12_NGX_PROVIDER=OFF \
   -DNRI_ENABLE_D3D12_SUPPORT=OFF -DNRI_ENABLE_NVAPI=OFF -DNRI_ENABLE_AMDAGS=OFF \
   -DSHADERMAKE_DXC_VK_PATH="$dxc" -DSHADERMAKE_DXC_PATH="$dxc" -DSHADERMAKE_FXC_PATH=/bin/false
-ninja -C "$build" TriAevum.exe triaevum_title_aot.dll oot3d_native_pica_aot_compiler.exe \
+ninja -C "$build" ${CMAKE_BUILD_PARALLEL_LEVEL:+-j"$CMAKE_BUILD_PARALLEL_LEVEL"} TriAevum.exe triaevum_title_aot.dll oot3d_native_pica_aot_compiler.exe \
   triaevum_title_whole_aot_support
 if [ $# -gt 0 ]; then
   python3 "$root/tools/mm3d/package/build_package.py" --platform windows --runtime "$build" --out "$1"
