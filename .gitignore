@@ -474,3 +474,14 @@ _packages
 /clang-format
 /clang-format.exe
 *.o2r
+
+# Game dumps and anything extracted from them: never commit
+*.3ds
+*.cci
+*.cia
+*.cxi
+*.3dsx
+code.bin
+exheader.bin
+romfs.bin
+/dist/

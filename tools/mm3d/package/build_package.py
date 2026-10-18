@@ -65,6 +65,8 @@ def main() -> int:
     parser.add_argument("--sdk", type=Path, default=Path.home() / "mm3d_pc/deps/steamrt4-sdk")
     parser.add_argument("--zig", type=Path, default=Path.home() / "mm3d_pc/deps/zig_dl/zig-x86_64-linux-0.17.0/zig")
     parser.add_argument("--nlohmann", type=Path, default=Path.home() / "mm3d_pc/deps/prefix/include")
+    # llvm-mingw, msys2/clang64 and win-overrides from scripts/build-windows-mingw.sh (its DEPS).
+    parser.add_argument("--deps", type=Path, default=Path(os.environ.get("DEPS", Path.home() / "mm3d_pc/deps")))
     args = parser.parse_args()
     out = args.out.resolve()
     if out.exists():
@@ -77,7 +79,7 @@ def main() -> int:
     if windows:
         for name in ("TriAevum.exe", "triaevum_title_aot.dll", "oot3d_native_pica_aot_compiler.exe"):
             shutil.copy2(runtime / name, out / name)
-        deps = Path.home() / "mm3d_pc/deps"
+        deps = args.deps.resolve()
         env = dict(os.environ, LLVM_MINGW_ROOT=str(deps / "llvm-mingw"), MINGW_SYSROOT=str(deps / "msys2/clang64"),
                    WIN_DLL_OVERRIDES=str(deps / "win-overrides"))
         subprocess.run(["python3", HERE / "collect_dlls.py", out / "TriAevum.exe",
@@ -131,10 +133,7 @@ def main() -> int:
             "GPL-3.0 with the GCC Runtime Library Exception (see\n"
             "https://www.gnu.org/licenses/gcc-exception-3.1.html).\n")
     (out / "resources").mkdir()
-    shutil.copy2(REPO / "runtime/three_ds_recomp/resources/gamecontrollerdb.txt"
-                 if (REPO / "runtime/three_ds_recomp/resources/gamecontrollerdb.txt").exists()
-                 else Path.home() / "mm3d_pc/play/mm3d_tri/resources/gamecontrollerdb.txt",
-                 out / "resources/gamecontrollerdb.txt")
+    shutil.copy2(REPO / "runtime/triaevum_resources/gamecontrollerdb.txt", out / "resources/gamecontrollerdb.txt")
 
     # Setup: the TriAevum tool trees the pipeline runs from.
     tree = out / "setup/TriAevum"
@@ -166,7 +165,7 @@ def main() -> int:
     import package_licenses
     package_licenses.common(out, REPO, args.platform)
     if windows:
-        package_licenses.windows(out, Path.home() / "mm3d_pc/deps")
+        package_licenses.windows(out, args.deps.resolve())
     else:
         package_licenses.linux(out, args.sdk)
     (out / "package.json").write_text(json.dumps({"platform": args.platform}, indent=1))

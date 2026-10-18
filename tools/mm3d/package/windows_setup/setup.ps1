@@ -98,6 +98,8 @@ try {
   $setupArgs = @("$root\setup\TriAevum\tools\mm3d\package\mm3d_setup.py", '--install', $root,
                  '--cxx', $clang, '--ar', "$root\tools\llvm-mingw\bin\llvm-ar.exe")
   if ($args.Count -gt 0) { $setupArgs += @('--rom', $args[0]) }
+  # Anything after the ROM goes to mm3d_setup.py (e.g. --no-shader-tour, --jobs N).
+  if ($args.Count -gt 1) { $setupArgs += $args[1..($args.Count - 1)] }
   & $python @setupArgs
   if ($LASTEXITCODE -ne 0) { throw "setup failed (exit $LASTEXITCODE)" }
   Write-Host ""
