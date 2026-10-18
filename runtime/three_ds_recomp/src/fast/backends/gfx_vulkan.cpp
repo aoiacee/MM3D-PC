@@ -3334,6 +3334,7 @@ std::vector<uint32_t> GfxRenderingAPIVulkan::CompileShaderSpirv(
 }
 
 void GfxRenderingAPIVulkan::ConfigureNativePicaAotShaders() {
+    Renderer::WarmShadercCompilerAsync();
     mCompiledShaderCache.Configure(VulkanShaderCacheDirectory(), Renderer::ShadercCompilerContract());
     mNriInterop.Shaders().Configure(VulkanShaderCacheDirectory());
     mCompiledShaderCacheSummaryLogged = false;

@@ -9,6 +9,9 @@ namespace Fast::Renderer {
 // Empty means provenance was unavailable: compile normally, without disk reuse.
 const std::string& ShadercCompilerContract();
 std::vector<uint32_t> CompileShadercSpirv(std::string_view source, SpirvStage stage, const char* name);
+// Builds glslang's per-stage/per-target built-in tables on a background thread,
+// so the first runtime compile of each kind does not pay for them. Idempotent.
+void WarmShadercCompilerAsync();
 
 using ShaderDefines = std::vector<std::pair<std::string, std::string>>;
 std::span<const uint32_t> FindBuiltinPassShaderSpirv(std::string_view source,

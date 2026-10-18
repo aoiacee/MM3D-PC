@@ -16,6 +16,8 @@
 #include <set>
 #include <sstream>
 #include <stdexcept>
+#include <mutex>
+#include <thread>
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -156,6 +158,33 @@ std::vector<uint32_t> CompileShadercSpirv(std::string_view source, SpirvStage st
     if (result.GetCompilationStatus() != shaderc_compilation_status_success)
         throw std::runtime_error(std::string("shaderc failed for ") + name + ": " + result.GetErrorMessage());
     return {result.cbegin(), result.cend()};
+}
+
+void WarmShadercCompilerAsync() {
+    static std::once_flag once;
+    std::call_once(once, [] {
+        KeepGlslangInitialized();
+        std::thread([] {
+            // The targets the runtime uses: PICA programs (Vulkan 1.1) and passes (Vulkan 1.2).
+            static constexpr std::string_view kVertex =
+                "#version 450\nvoid main() { gl_Position = vec4(0.0); }\n";
+            static constexpr std::string_view kFragment =
+                "#version 450\nlayout(location = 0) out vec4 color;\nvoid main() { color = vec4(0.0); }\n";
+            try {
+                shaderc::Compiler compiler;
+                for (const auto target : {shaderc_env_version_vulkan_1_1, shaderc_env_version_vulkan_1_2}) {
+                    shaderc::CompileOptions options;
+                    options.SetTargetEnvironment(shaderc_target_env_vulkan, target);
+                    options.SetOptimizationLevel(shaderc_optimization_level_performance);
+                    compiler.CompileGlslToSpv(kVertex.data(), kVertex.size(), shaderc_vertex_shader, "warm.vert", options);
+                    compiler.CompileGlslToSpv(kFragment.data(), kFragment.size(), shaderc_fragment_shader, "warm.frag",
+                                              options);
+                }
+            } catch (...) {
+                // Warming is an optimization only.
+            }
+        }).detach();
+    });
 }
 
 void CachedPassShaderCompiler::Configure(std::filesystem::path directory) {
